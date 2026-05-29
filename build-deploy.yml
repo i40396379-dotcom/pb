@@ -1,0 +1,177 @@
+name: Build & Deploy PlayBeat Digital
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'playbeat.py'
+      - 'shared.js'
+      - 'shared.css'
+      - 'build.py'
+      - '.github/workflows/build-deploy.yml'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build PlayBeat Digital Package
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run build script
+        run: python3 build.py
+
+      - name: List generated files
+        run: |
+          echo "Generated files:"
+          ls -lah dist/
+          echo ""
+          echo "File count:"
+          find dist -type f | wc -l
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: PlayBeat-Digital-Build
+          path: |
+            dist/
+            PlayBeat_Digital_Package_*.zip
+          retention-days: 30
+
+      - name: Create Release (on push to main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: PlayBeat_Digital_Package_*.zip
+          tag_name: v${{ github.run_number }}-${{ github.run_id }}
+          draft: false
+          prerelease: false
+          body: |
+            # PlayBeat Digital Package
+            
+            Automated build generated from commit ${{ github.sha }}
+            
+            ## Contents
+            - 19 fully responsive HTML pages
+            - Complete e-commerce marketplace
+            - Dark theme with gradient UI
+            - User authentication system
+            - Product catalog with filtering
+            - Shopping cart & checkout
+            - Order management
+            - Wishlist functionality
+            
+            ## How to Use
+            1. Extract the ZIP file
+            2. Open `dist/index.html` in a web browser
+            3. Test all features locally
+            4. Deploy `dist/` folder to your hosting
+            
+            ## Files Included
+            - 19 HTML pages (category pages, checkout, account, etc.)
+            - shared.css - Complete responsive stylesheet
+            - shared.js - Full client-side functionality
+            - BUILD_REPORT.md - Detailed build information
+            
+            Build timestamp: ${{ github.event.head_commit.timestamp }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to GitHub Pages (optional)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: 'dist'
+
+  deploy-pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
+
+  quality-check:
+    runs-on: ubuntu-latest
+    name: Quality Checks
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile playbeat.py build.py
+
+      - name: Check file sizes
+        run: |
+          echo "File sizes:"
+          wc -l playbeat.py build.py shared.js shared.css
+          echo ""
+          echo "Total lines of code:"
+          (wc -l playbeat.py build.py shared.js shared.css | tail -1)
+
+      - name: Validate HTML structure (basic)
+        run: |
+          python3 build.py
+          echo "Checking generated HTML files..."
+          find dist -name "*.html" -exec sh -c 'echo "Validating {}"; grep -q "<!DOCTYPE html>" {} && echo "✓ Valid" || echo "✗ Invalid"' \;
+
+  security-scan:
+    runs-on: ubuntu-latest
+    name: Security Scan
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  notify:
+    if: always()
+    needs: [build, quality-check]
+    runs-on: ubuntu-latest
+    name: Build Notification
+    
+    steps:
+      - name: Build Status
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "✅ Build completed successfully"
+            echo "Build artifacts are ready for download"
+          else
+            echo "❌ Build failed"
+            exit 1
+          fi
